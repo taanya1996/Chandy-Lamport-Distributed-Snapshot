@@ -24,6 +24,9 @@ markerCount=0
 markersInProgress = {}
 markersDone=[]
 
+prob=0
+toggle=""
+
 def sleep():
 	time.sleep(3)
 
@@ -32,7 +35,7 @@ def incrementMarker():
 	markerCount += 1
 	return str(pid) + "|" + str(markerCount)
 
-def getRandomIndex(prob=0):
+def getRandomIndex():
 	randNo=random.randint(0, 100)
 	if(randNo<=prob):
 		return None
@@ -44,6 +47,7 @@ class MasterHandler(Thread):
 		Thread.__init__(self)
 
 	def run(self):
+		global token
 		token=False
 		while True:
 			if len(myQueue) != 0:
@@ -57,8 +61,14 @@ class MasterHandler(Thread):
 						if(markersInProgress[markerId].listenToChannel[data.fromClient] == True):
 							markersInProgress[markerId].channelMessages[data.fromClient].append("T")
 					#TokenLock.acquire()
+					#ind=random.randint(0, len(outgoing)-1)
 					token=True
-					ind=random.randint(0, len(outgoing)-1)
+					time.sleep(1)
+					ind=getRandomIndex()
+					if(ind==None):
+						print("Token is lost")
+						continue
+					
 					receiver=outgoing[ind]
 					token=False
 					#TokenLock.release()
@@ -90,6 +100,8 @@ class MasterHandler(Thread):
 					if(data.markerId not in markersDone):
 						print("Recieved SNAPSHOT for "+ str(data.markerId) +" from " + str(data.fromClient)+ " ", dt.datetime.now())
 						self.handleLocalSnaps(data)
+
+
 
 	def handleRecievedMarkers(self, data):
 		#print("Recieved markers for " + str(data.markerId)+":")
@@ -425,6 +437,7 @@ def main():
 	while True:
 		print("=======================================================")
 		print("| For Start token  'TOKEN' 						     |")
+		print("| To specify probability/change of Loosing - C probVal Eg.(P 10")
 		print("| For Snapshot type 'SNAP'                            |")
 		print("=======================================================")
 		user_input = input()
@@ -439,34 +452,24 @@ def main():
 			token=True
 			message=Messages("TOKEN",pid,"")
 			#choose a dest
-			ind=random.randint(0, len(outgoing)-1)
-			print("random Index",ind)
-			receiver=outgoing[ind]
-			#print("=====================================================")
-			print("Sending token to ", receiver)
-			c2c_connections[receiver].send(pickle.dumps(message))
-			#print("=====================================================")
-			TokenLock.release()
-
-			'''
-			reciever, amount = user_input.split()
-			if int(reciever) in outgoing:
-				if int(amount) > currentBalance:
-					print("Insufficient Balance")
-				else:
-					balanceLock.acquire()
-					currentBalance -= int(amount)
-					balanceLock.release()
-					message = Messages("TRANSACTION", pid, "", amount)
-					sleep()
-					print("=====================================================")
-					print("Sending $"+str(amount)+" to "+str(reciever))
-					c2c_connections[int(reciever)].send(pickle.dumps(message))
-					print("Updated balance is $" + str(currentBalance))
-					print("=====================================================")
+			#ind=random.randint(0, len(outgoing)-1)
+			ind=getRandomIndex()
+			if(ind==None):
+				print("Token is lost")
 			else:
-				print("Client " + str(reciever) + " is not connected")
-			'''
+				print("random Index",ind)
+				receiver=outgoing[ind]
+				#print("=====================================================")
+				print("Sending token to ", receiver)
+				c2c_connections[receiver].send(pickle.dumps(message))
+				#print("=====================================================")
+			TokenLock.release()
+		elif len(user_input.split()) == 2:
+			global toggle
+			global prob
+			toggle,prob = user_input.split()
+			prob=int(prob)
+			print("Probability of Losing updated to ",prob)
 		else:
 			print("INVALID INPUT")
 			continue
