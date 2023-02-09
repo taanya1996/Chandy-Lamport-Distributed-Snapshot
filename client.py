@@ -6,6 +6,7 @@ import threading
 import random
 from threading import Thread
 from common import *
+import datetime as dt
 
 
 buff_size = 1024
@@ -33,7 +34,7 @@ def incrementMarker():
 
 def getRandomIndex(prob=0):
 	randNo=random.randint(0, 100)
-	if(rnadNo<=prob):
+	if(randNo<=prob):
 		return None
 	ind=random.randint(0, len(outgoing)-1)
 	return ind
@@ -51,7 +52,7 @@ class MasterHandler(Thread):
 				myQueueLock.release()
 				if data.reqType == "TOKEN":
 					#print("=====================================================")
-					print("Recieved Token from " + str(data.fromClient))
+					print("Recieved Token from " + str(data.fromClient)+ " ",dt.datetime.now())
 					for markerId in markersInProgress:
 						if(markersInProgress[markerId].listenToChannel[data.fromClient] == True):
 							markersInProgress[markerId].channelMessages[data.fromClient].append("T")
@@ -69,7 +70,7 @@ class MasterHandler(Thread):
 					
 					
 				elif data.reqType == "MARKER":
-					print("Recieved MARKER for "+ str(data.markerId) +" from " + str(data.fromClient))
+					print("Recieved MARKER for "+ str(data.markerId) +" from " + str(data.fromClient)+ " ", dt.datetime.now())
 					if ((data.markerId in markersInProgress) and (data.markerId not in markersDone)) :
 						if markersInProgress[data.markerId].listenToChannel[data.fromClient] == True:
 							markersInProgress[data.markerId].listenToChannel[data.fromClient] = False
@@ -84,20 +85,23 @@ class MasterHandler(Thread):
 							self.handleRecievedMarkers(data)
 
 				elif data.reqType == "SNAP":
-					print("MarkerId:", data.markerId)
-					print("MarkersDone",markersDone)
+					#print("MarkerId:", data.markerId)
+					#print("MarkersDone",markersDone)
 					if(data.markerId not in markersDone):
-						print("Recieved SNAPSHOT for "+ str(data.markerId) +" from " + str(data.fromClient))
+						print("Recieved SNAPSHOT for "+ str(data.markerId) +" from " + str(data.fromClient)+ " ", dt.datetime.now())
 						self.handleLocalSnaps(data)
 
 	def handleRecievedMarkers(self, data):
-		print("Recieved markers for " + str(data.markerId)+":")
+		#print("Recieved markers for " + str(data.markerId)+":")
 		markersInProgress[data.markerId].recievedMarkers.sort()
+		'''
 		for i in markersInProgress[data.markerId].recievedMarkers:
 			print(str(i))
+		
 		print("Incoming: ")
 		for i in incoming:
 			print(i)
+		'''
 
 		initiator = int(data.markerId.split("|")[0])
 		print("Initiator: "+ str(initiator)+ "; My PID: " + str(pid))
@@ -168,7 +172,7 @@ class MarkerThread(Thread):
 
 	def run(self):		
 		#time.sleep(2.5)
-		sleep()
+		#sleep()
 		for i in outgoing:
 			message = Messages("MARKER", pid, self.markerId)
 			print("Sending MARKER for "+ str(self.markerId) +" to "+ str(i))
