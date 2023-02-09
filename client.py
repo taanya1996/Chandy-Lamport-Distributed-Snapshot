@@ -31,6 +31,12 @@ def incrementMarker():
 	markerCount += 1
 	return str(pid) + "|" + str(markerCount)
 
+def getRandomIndex(prob=0):
+	randNo=random.randint(0, 100)
+	if(rnadNo<=prob):
+		return None
+	ind=random.randint(0, len(outgoing)-1)
+	return ind
 
 class MasterHandler(Thread):
 	def __init__(self):
@@ -44,24 +50,22 @@ class MasterHandler(Thread):
 				data = myQueue.pop(0)
 				myQueueLock.release()
 				if data.reqType == "TOKEN":
-					print("=====================================================")
+					#print("=====================================================")
 					print("Recieved Token from " + str(data.fromClient))
 					for markerId in markersInProgress:
 						if(markersInProgress[markerId].listenToChannel[data.fromClient] == True):
 							markersInProgress[markerId].channelMessages[data.fromClient].append("T")
 					#TokenLock.acquire()
 					token=True
-					print("Token received from ", data.fromClient)
-					print("=====================================================")
 					ind=random.randint(0, len(outgoing)-1)
 					receiver=outgoing[ind]
 					token=False
 					#TokenLock.release()
 					message=Messages("TOKEN",pid,"")
-					print("=====================================================")
+					#print("=====================================================")
 					print("Sending token to ", receiver)
 					c2c_connections[receiver].send(pickle.dumps(message))
-					print("=====================================================")
+					#print("=====================================================")
 					
 					
 				elif data.reqType == "MARKER":
@@ -374,7 +378,7 @@ def main():
 			i+=1
 
 		incoming.append(2)
-		outgoing.append(5)
+		incoming.append(5)
 		outgoing.append(1)
 		outgoing.append(2)
 		outgoing.append(3)
@@ -434,10 +438,10 @@ def main():
 			ind=random.randint(0, len(outgoing)-1)
 			print("random Index",ind)
 			receiver=outgoing[ind]
-			print("=====================================================")
+			#print("=====================================================")
 			print("Sending token to ", receiver)
 			c2c_connections[receiver].send(pickle.dumps(message))
-			print("=====================================================")
+			#print("=====================================================")
 			TokenLock.release()
 
 			'''
