@@ -21,6 +21,7 @@ token=False
 
 markerCount=0
 markersInProgress = {}
+markersDone=[]
 
 def sleep():
 	time.sleep(3)
@@ -48,14 +49,14 @@ class MasterHandler(Thread):
 					for markerId in markersInProgress:
 						if(markersInProgress[markerId].listenToChannel[data.fromClient] == True):
 							markersInProgress[markerId].channelMessages[data.fromClient].append("T")
-					TokenLock.acquire()
+					#TokenLock.acquire()
 					token=True
 					print("Token received from ", data.fromClient)
 					print("=====================================================")
 					ind=random.randint(0, len(outgoing)-1)
 					receiver=outgoing[ind]
 					token=False
-					TokenLock.release()
+					#TokenLock.release()
 					message=Messages("TOKEN",pid,"")
 					print("=====================================================")
 					print("Sending token to ", receiver)
@@ -65,19 +66,25 @@ class MasterHandler(Thread):
 					
 				elif data.reqType == "MARKER":
 					print("Recieved MARKER for "+ str(data.markerId) +" from " + str(data.fromClient))
-					if data.markerId in markersInProgress:
+					if ((data.markerId in markersInProgress) and (data.markerId not in markersDone)) :
 						if markersInProgress[data.markerId].listenToChannel[data.fromClient] == True:
 							markersInProgress[data.markerId].listenToChannel[data.fromClient] = False
 							#print(" Appending recieved markers : " + str(data.fromClient))
 							markersInProgress[data.markerId].recievedMarkers.append(data.fromClient)
 							self.handleRecievedMarkers(data)
 					else:
-						sendMarkers(data.markerId, data.fromClient)
-						self.handleRecievedMarkers(data)
+						if(data.markerId in markersDone):
+							pass
+						else:
+							sendMarkers(data.markerId, data.fromClient)
+							self.handleRecievedMarkers(data)
 
 				elif data.reqType == "SNAP":
-					print("Recieved SNAPSHOT for "+ str(data.markerId) +" from " + str(data.fromClient))
-					self.handleLocalSnaps(data)
+					print("MarkerId:", data.markerId)
+					print("MarkersDone",markersDone)
+					if(data.markerId not in markersDone):
+						print("Recieved SNAPSHOT for "+ str(data.markerId) +" from " + str(data.fromClient))
+						self.handleLocalSnaps(data)
 
 	def handleRecievedMarkers(self, data):
 		print("Recieved markers for " + str(data.markerId)+":")
@@ -99,8 +106,10 @@ class MasterHandler(Thread):
 			sleep()
 			print("Sending SNAPSHOT for "+ str(data.markerId) +" to " + str(initiator))
 			c2c_connections[initiator].send(pickle.dumps(locState))
+			markersDone.append(data.markerId)
 			markersInProgress.pop(data.markerId)
 		elif markersInProgress[data.markerId].recievedMarkers == incoming and initiator == pid and markersInProgress[data.markerId].snapshotCount == 4:
+			markersDone.append(data.markerId)
 			self.printGlobalSnap(data.markerId)
 
 
