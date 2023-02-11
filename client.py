@@ -16,8 +16,12 @@ c2c_connections = {}
 outgoing = []
 incoming = []
 myQueue=[]
+tQueue=[]
 myQueueLock = threading.RLock()
+tQueueLock= threading.RLock()
 TokenLock = threading.RLock()
+snapLock = threading.RLock()
+markerLock= threading.RLock()
 token=False
 
 markerCount=0
@@ -37,7 +41,7 @@ def incrementMarker():
 
 def getRandomIndex():
 	randNo=random.randint(0, 100)
-	if(randNo<=prob):
+	if(randNo<prob):
 		return None
 	ind=random.randint(0, len(outgoing)-1)
 	return ind
@@ -53,35 +57,46 @@ class MasterHandler(Thread):
 			if len(myQueue) != 0:
 				myQueueLock.acquire()
 				data = myQueue.pop(0)
-				myQueueLock.release()
+				dataTime=tQueue.pop(0)
+				delta=time.time()-dataTime
+				if(delta<3):
+					time.sleep(3-delta)
 				if data.reqType == "TOKEN":
 					#print("=====================================================")
 					print("Recieved Token from " + str(data.fromClient)+ " ",dt.datetime.now())
 					for markerId in markersInProgress:
 						if(markersInProgress[markerId].listenToChannel[data.fromClient] == True):
 							markersInProgress[markerId].channelMessages[data.fromClient].append("T")
-					#TokenLock.acquire()
+					TokenLock.acquire()
 					#ind=random.randint(0, len(outgoing)-1)
 					token=True
 					time.sleep(1)
 					ind=getRandomIndex()
 					if(ind==None):
 						print("Token is lost")
+						token=False
+						TokenLock.release()
 						continue
 					
 					receiver=outgoing[ind]
 					token=False
-					#TokenLock.release()
+					TokenLock.release()
 					message=Messages("TOKEN",pid,"")
 					#print("=====================================================")
 					print("Sending token to ", receiver)
 					c2c_connections[receiver].send(pickle.dumps(message))
 					#print("=====================================================")
 					
-					
 				elif data.reqType == "MARKER":
-					print("Recieved MARKER for "+ str(data.markerId) +" from " + str(data.fromClient)+ " ", dt.datetime.now())
+					snapLock.acquire()
+					print("Recieved MARKER for "+ str(data.markerId) +" from " + str(data.fromClient)+ " at ", dt.datetime.now())
+
+					for markerId in markersInProgress:
+						if(data.markerId != markerId and markersInProgress[markerId].listenToChannel[data.fromClient] == True):
+							markersInProgress[markerId].channelMessages[data.fromClient].append(data.markerId)
+
 					if ((data.markerId in markersInProgress) and (data.markerId not in markersDone)) :
+						#print("entering into channel data addition step")
 						if markersInProgress[data.markerId].listenToChannel[data.fromClient] == True:
 							markersInProgress[data.markerId].listenToChannel[data.fromClient] = False
 							#print(" Appending recieved markers : " + str(data.fromClient))
@@ -89,10 +104,15 @@ class MasterHandler(Thread):
 							self.handleRecievedMarkers(data)
 					else:
 						if(data.markerId in markersDone):
+							#print("SNAP already sent for {}".format(data.markerId))
 							pass
 						else:
+							print("marker received for the first time")
+							markerLock.acquire()
 							sendMarkers(data.markerId, data.fromClient)
 							self.handleRecievedMarkers(data)
+							markerLock.release()
+					snapLock.release()
 
 				elif data.reqType == "SNAP":
 					#print("MarkerId:", data.markerId)
@@ -100,12 +120,12 @@ class MasterHandler(Thread):
 					if(data.markerId not in markersDone):
 						print("Recieved SNAPSHOT for "+ str(data.markerId) +" from " + str(data.fromClient)+ " ", dt.datetime.now())
 						self.handleLocalSnaps(data)
+				myQueueLock.release()
 
 
 
 	def handleRecievedMarkers(self, data):
 		#print("Recieved markers for " + str(data.markerId)+":")
-		markersInProgress[data.markerId].recievedMarkers.sort()
 		'''
 		for i in markersInProgress[data.markerId].recievedMarkers:
 			print(str(i))
@@ -116,50 +136,47 @@ class MasterHandler(Thread):
 		'''
 
 		initiator = int(data.markerId.split("|")[0])
-		print("Initiator: "+ str(initiator)+ "; My PID: " + str(pid))
-
-		if markersInProgress[data.markerId].recievedMarkers == incoming and initiator != pid:
+		if len(markersInProgress[data.markerId].recievedMarkers) == len(incoming):
 			channelState = {}
 			for i in incoming:
 				channelState[i] = markersInProgress[data.markerId].channelMessages[i]
 			locState = State("SNAP", pid, data.markerId, markersInProgress[data.markerId].tokenState, channelState)
-			sleep()
-			print("Sending SNAPSHOT for "+ str(data.markerId) +" to " + str(initiator))
-			c2c_connections[initiator].send(pickle.dumps(locState))
-			markersDone.append(data.markerId)
-			markersInProgress.pop(data.markerId)
-		elif markersInProgress[data.markerId].recievedMarkers == incoming and initiator == pid and markersInProgress[data.markerId].snapshotCount == 4:
-			markersDone.append(data.markerId)
-			self.printGlobalSnap(data.markerId)
-
+			if initiator == pid:
+				print("Sending myself local snap for global snap i have initiated")
+				self.handleLocalSnaps(locState)
+			else:
+				try:
+					c2c_connections[initiator].send(pickle.dumps(locState))
+					print("Sending SNAPSHOT for "+ str(data.markerId) +" to " + str(initiator))
+				except:
+					print("Failed to send SNAPSHOT for {} to {}".format(data.markerId, initiator))
+				markersDone.append(data.markerId)
 
 	def handleLocalSnaps(self, data):
 		if(data.fromClient not in markersInProgress[data.markerId].recievedSnaps):
 			markersInProgress[data.markerId].recievedSnaps[data.fromClient] = data
 			markersInProgress[data.markerId].snapshotCount += 1
-		
-		markersInProgress[data.markerId].recievedMarkers.sort()
-		if markersInProgress[data.markerId].snapshotCount == 4 and markersInProgress[data.markerId].recievedMarkers == incoming:
+			print("Received local snap from {} and waiting for {} more".format(data.fromClient, 5 - markersInProgress[data.markerId].snapshotCount))
+
+		if markersInProgress[data.markerId].snapshotCount == 5:
+			markersDone.append(data.markerId)
 			self.printGlobalSnap(data.markerId)
 
 
 	def printGlobalSnap(self, markerId):
 		print("=====================================================")
-		for j in range(1,6):
-			print("-------------------------------------------------")
-			print("State of "+str(j)+": ")
-			if j == pid:
-				print("Token state of "+ str(j) +": " + str(markersInProgress[markerId].tokenState))
-				print("Channel states: ")
-				for i in incoming:
-					print(str(i) + " : " + str(markersInProgress[markerId].channelMessages[i]))
-			else:
-				print("Token state of "+ str(j) +": " + str(markersInProgress[markerId].recievedSnaps[j].tokenState))
-				print("Channel states: ")
-				for i in markersInProgress[markerId].recievedSnaps[j].channelState:
-					print(str(i) + " : " + str(markersInProgress[markerId].recievedSnaps[j].channelState[i]))
+		print("Client States")
+		for client in range(1,6):
+			print("Token state of "+ str(client) +": " + str(markersInProgress[markerId].recievedSnaps[client].tokenState))
+		print("Channel states: ")
+		for client in range(1,6):
+			#print("State of "+str(client)+": ")
+			#print("Token state of "+ str(client) +": " + str(markersInProgress[markerId].recievedSnaps[client].tokenState))
+			#print("Channel states: ")
+			for channel in markersInProgress[markerId].recievedSnaps[client].channelState:
+				print(channel,"-->",client,":",str(markersInProgress[markerId].recievedSnaps[client].channelState[channel]))
+				#print(str(channel) + " : " + str(markersInProgress[markerId].recievedSnaps[client].channelState[channel]))
 		print("=====================================================")
-		markersInProgress.pop(markerId)
 
 class ClientConnections(Thread):
 	def __init__(self,connection):
@@ -167,14 +184,12 @@ class ClientConnections(Thread):
 		self.connection = connection
 
 	def run(self):
-
 		while True:
 			response = self.connection.recv(buff_size)
 			data = pickle.loads(response)
-			sleep()
-			myQueueLock.acquire()
+			#print("Message {} received from {}".format(data.reqType,data.fromClient))
 			myQueue.append(data)
-			myQueueLock.release()
+			tQueue.append(time.time())
 		
 
 class MarkerThread(Thread):
@@ -185,12 +200,16 @@ class MarkerThread(Thread):
 	def run(self):		
 		#time.sleep(2.5)
 		#sleep()
+		markerLock.acquire()
 		for i in outgoing:
 			message = Messages("MARKER", pid, self.markerId)
-			print("Sending MARKER for "+ str(self.markerId) +" to "+ str(i))
 			c2c_connections[i].send(pickle.dumps(message))
+			print("Sending MARKER for {} to {} at {}".format(self.markerId, i, dt.datetime.now()))
+		markerLock.release()
+		
 
 def sendMarkers(markerId, fromClient):
+	print("Creating a channel tracking object post first receival from {}".format(fromClient))
 	trackChannels = TrackChannels(markerId)
 
 	markersInProgress[markerId] = trackChannels
@@ -234,7 +253,7 @@ def main():
 		client2client = socket.socket()
 		client2client.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		client2client.bind((ip, client_port))
-		client2client.listen(5)
+		client2client.listen(20)
 		print('Waiting for a Connection..')
 
 		i = 2
@@ -267,7 +286,7 @@ def main():
 		client2client = socket.socket()
 		client2client.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		client2client.bind((ip, client_port))
-		client2client.listen(5)
+		client2client.listen(20)
 
 
 		i = 3
@@ -320,7 +339,7 @@ def main():
 		client2client = socket.socket()
 		client2client.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		client2client.bind((ip, client_port))
-		client2client.listen(5)
+		client2client.listen(20)
 
 
 		i = 4
@@ -382,7 +401,7 @@ def main():
 		client2client = socket.socket()
 		client2client.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		client2client.bind((ip, client_port))
-		client2client.listen(5)
+		client2client.listen(20)
 
 		i = 5
 		while i <= 5:
@@ -437,7 +456,7 @@ def main():
 	while True:
 		print("=======================================================")
 		print("| For Start token  'TOKEN' 						     |")
-		print("| To specify probability/change of Loosing - C probVal Eg.(P 10")
+		print("| To specify probability/change of Loosing - C probVal Eg.(P 10)")
 		print("| For Snapshot type 'SNAP'                            |")
 		print("=======================================================")
 		user_input = input()
@@ -446,7 +465,9 @@ def main():
 		elif user_input == "SNAP":
 			markerId = incrementMarker()
 			print("Initiating snapshot "+ str(markerId))
+			markerLock.acquire()
 			sendMarkers(markerId, pid)
+			markerLock.release()
 		elif user_input=="TOKEN":
 			TokenLock.acquire()
 			token=True
